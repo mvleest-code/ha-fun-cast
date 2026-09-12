@@ -113,12 +113,12 @@ class FunCastCard extends HTMLElement {
   _closePicker() { this.shadowRoot.querySelector(".picker").hidden=true; }
   async _cast(target) {
     if(!this._selected || !target) return; const repeat=this.shadowRoot.querySelector("input.repeat").checked; const targetName=this._targets().find(item=>item.entity===target)?.name||target; this._closePicker(); this._status("Cast starten…");
-    try { await this._hass.callService("media_player","play_media",{media_content_id:this._selected.source,media_content_type:"video/mp4"},{entity_id:target}); if(repeat) { try { await this._hass.callService("media_player","repeat_set",{repeat:"one"},{entity_id:target}); } catch(err) { console.warn("Herhalen niet ondersteund",err); } } this._castingTarget=target; this.shadowRoot.querySelector("button.stop").hidden=false; this._status((repeat?"Herhalend gecast naar ":"Wordt gecast naar ")+targetName); }
+    try { await this._hass.callService("media_player","play_media",{media_content_id:this._selected.source,media_content_type:"video/mp4"},{entity_id:target}); await this._fetch("/api/fun_cast/repeat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:repeat,entity_id:target,source:this._selected.source})}); this._castingTarget=target; this.shadowRoot.querySelector("button.stop").hidden=false; this._status((repeat?"Herhalend gecast naar ":"Wordt gecast naar ")+targetName); }
     catch(err){this._status(err.message||"Cast mislukt",true);}
   }
   async _stop() {
     if(!this._castingTarget) return; this._status("Cast stoppen…");
-    try { await this._hass.callService("media_player","media_stop",{}, {entity_id:this._castingTarget}); this._castingTarget=null; this.shadowRoot.querySelector("button.stop").hidden=true; this._status("Cast gestopt"); }
+    try { await this._fetch("/api/fun_cast/repeat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:false,entity_id:this._castingTarget})}); await this._hass.callService("media_player","media_stop",{}, {entity_id:this._castingTarget}); this._castingTarget=null; this.shadowRoot.querySelector("button.stop").hidden=true; this._status("Cast gestopt"); }
     catch(err){this._status(err.message||"Stoppen mislukt",true);}
   }
 }

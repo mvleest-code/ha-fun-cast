@@ -8,6 +8,7 @@ import os
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import slugify
 
 DOMAIN = "fun_cast"
@@ -17,6 +18,65 @@ STORE = Path("/media/fun_cast")
 
 def _source(name: str) -> str:
     return f"media-source://media_source/local/fun_cast/{name}"
+
+
+REPEAT_LISTENERS = f"{DOMAIN}_repeat_listeners"
+
+
+def _stop_repeat(hass: HomeAssistant, entity_id: str) -> None:
+    listeners = hass.data.setdefault(REPEAT_LISTENERS, {})
+    remove = listeners.pop(entity_id, None)
+    if remove:
+        remove()
+
+
+def _start_repeat(hass: HomeAssistant, entity_id: str, source: str) -> None:
+    _stop_repeat(hass, entity_id)
+
+    async def _on_state_change(event) -> None:
+        old_state = event.data.get("old_state")
+        new_state = event.data.get("new_state")
+        if not old_state or not new_state:
+            return
+        if old_state.state not in ("playing", "paused", "buffering"):
+            return
+        if new_state.state not in ("idle", "off"):
+            return
+        await hass.services.async_call(
+            "media_player",
+            "play_media",
+            {"media_content_id": source, "media_content_type": "video/mp4"},
+            target={"entity_id": entity_id},
+            blocking=False,
+        )
+
+    hass.data.setdefault(REPEAT_LISTENERS, {})[entity_id] = async_track_state_change_event(
+        hass, entity_id, _on_state_change
+    )
+
+
+class FunCastRepeatView(HomeAssistantView):
+    url = "/api/fun_cast/repeat"
+    name = "api:fun_cast:repeat"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        try:
+            data = await request.json()
+            entity_id = str(data.get("entity_id", ""))
+            enabled = bool(data.get("enabled", False))
+            source = str(data.get("source", ""))
+        except Exception:
+            return self.json({"error": "Ongeldige herhaalopdracht."}, status_code=400)
+        if not entity_id.startswith("media_player."):
+            return self.json({"error": "Ongeldige mediaspeler."}, status_code=400)
+        if enabled:
+            if not source.startswith("media-source://media_source/local/fun_cast/"):
+                return self.json({"error": "Ongeldige clip."}, status_code=400)
+            _start_repeat(request.app["hass"], entity_id, source)
+        else:
+            _stop_repeat(request.app["hass"], entity_id)
+        return self.json({"enabled": enabled, "entity_id": entity_id})
 
 
 class FunCastView(HomeAssistantView):
@@ -120,4 +180,5 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         )
     ])
     hass.http.register_view(FunCastView())
+    hass.http.register_view(FunCastRepeatView())
     return True
